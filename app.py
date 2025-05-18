@@ -5,6 +5,8 @@ import os
 import openpyxl
 from openpyxl.styles import PatternFill
 from PIL import Image
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
 
 CONFIG_FILE = 'configuracoes.csv'
 
@@ -102,56 +104,91 @@ def aplicar_destaque_excel(df, output_file):
 
     wb.save(output_file)
 
+def export_to_pdf(df, output_file):
+    c = canvas.Canvas(output_file, pagesize=letter)
+    width, height = letter
+    c.setFont("Helvetica", 10)
+    c.drawString(30, height - 30, "Relatório de Auditoria Tributária")
+
+    # Table header
+    c.drawString(30, height - 50, "Descrição")
+    c.drawString(200, height - 50, "NCM")
+    c.drawString(350, height - 50, "Aliq. ICMS")
+    c.drawString(500, height - 50, "TRIBUTAÇÃO")
+
+    y_position = height - 70
+    for i, row in df.iterrows():
+        c.drawString(30, y_position, row['Descrição item'])
+        c.drawString(200, y_position, str(row['NCM']))
+        c.drawString(350, y_position, str(row['Aliq. ICMS']))
+        c.drawString(500, y_position, str(row['TRIBUTAÇÃO']))
+        y_position -= 15
+
+        if y_position < 40:
+            c.showPage()
+            c.setFont("Helvetica", 10)
+            y_position = height - 30
+    c.save()
+
 # === Execução do App ===
 
 configs = load_configurations()
 
-# 1. Adicionar base auditada
-st.header("🟩 1. Adicionar base auditada")
-uploaded_base = st.file_uploader("Envie a planilha auditada", type=['xlsx'], key='base')
-if uploaded_base:
-    base_df = pd.read_excel(uploaded_base)
-    base_df.columns = base_df.columns.str.strip().str.replace('"', '', regex=False).str.replace('\n', '', regex=False).str.replace('\r', '', regex=False)
+# Abas para organização do conteúdo
+tab1, tab2, tab3 = st.tabs(["🟩 1. Adicionar Base Auditada", "📋 2. Ver Base de Configurações", "🔍 3. Auditoria"])
 
-    for _, row in base_df.iterrows():
-        desc = str(row['Descrição item']).strip()
-        ncm = str(row['NCM']).strip()
-        aliq = str(row['Aliq. ICMS']).strip()
-        trib = str(row.get('TRIBUTAÇÃO', aliq)).strip()
-        configs[desc] = {'ncm': ncm, 'aliq_icms': aliq, 'tributacao': trib}
+with tab1:
+    st.header("1. Adicionar base auditada")
+    uploaded_base = st.file_uploader("Envie a planilha auditada", type=['xlsx'], key='base')  # Somente .xlsx agora
+    if uploaded_base:
+        base_df = pd.read_excel(uploaded_base)  # Lê o arquivo .xlsx
+        base_df.columns = base_df.columns.str.strip().str.replace('"', '', regex=False).str.replace('\n', '', regex=False).str.replace('\r', '', regex=False)
 
-    save_all_configurations(configs)
-    st.success("✅ Base auditada adicionada com sucesso!")
+        for _, row in base_df.iterrows():
+            desc = str(row['Descrição item']).strip()
+            ncm = str(row['NCM']).strip()
+            aliq = str(row['Aliq. ICMS']).strip()
+            trib = str(row.get('TRIBUTAÇÃO', aliq)).strip()
+            configs[desc] = {'ncm': ncm, 'aliq_icms': aliq, 'tributacao': trib}
 
-# 2. Ver base auditada com filtro
-st.header("📋 2. Ver base de configurações salva (com filtro)")
-search_term = st.text_input("🔎 Pesquise por NCM ou parte da descrição")
-if search_term:
-    search_term = search_term.lower().strip()
-    df_base = pd.DataFrame.from_dict(configs, orient='index')
-    df_base = df_base.reset_index().rename(columns={'index': 'Descrição'})
-    df_filtrada = df_base[
-        df_base['Descrição'].str.lower().str.contains(search_term) |
-        df_base['ncm'].str.lower().str.contains(search_term)
-    ]
-    st.dataframe(df_filtrada)
-elif st.checkbox("👁️ Mostrar toda a base auditada"):
-    df_base = pd.DataFrame.from_dict(configs, orient='index')
-    df_base = df_base.reset_index().rename(columns={'index': 'Descrição'})
-    st.dataframe(df_base)
+        save_all_configurations(configs)
+        st.success("✅ Base auditada adicionada com sucesso!")
 
-# 3. Auditoria
-st.header("🔍 3. Auditar nova planilha")
-uploaded_audit = st.file_uploader("Envie a planilha para auditoria", type=['xlsx'], key='audit')
-if uploaded_audit:
-    audit_df = pd.read_excel(uploaded_audit)
-    audit_df.columns = audit_df.columns.str.strip().str.replace('"', '', regex=False).str.replace('\n', '', regex=False).str.replace('\r', '', regex=False)
+with tab2:
+    st.header("2. Ver base de configurações salva (com filtro)")
+    search_term = st.text_input("🔎 Pesquise por NCM ou parte da descrição")
+    if search_term:
+        search_term = search_term.lower().strip()
+        df_base = pd.DataFrame.from_dict(configs, orient='index')
+        df_base = df_base.reset_index().rename(columns={'index': 'Descrição'})
+        df_filtrada = df_base[
+            df_base['Descrição'].str.lower().str.contains(search_term) |
+            df_base['ncm'].str.lower().str.contains(search_term)
+        ]
+        st.dataframe(df_filtrada)
+    elif st.checkbox("👁️ Mostrar toda a base auditada"):
+        df_base = pd.DataFrame.from_dict(configs, orient='index')
+        df_base = df_base.reset_index().rename(columns={'index': 'Descrição'})
+        st.dataframe(df_base)
 
-    result_df = process_planilha(audit_df, configs)
-    st.success("✅ Planilha auditada com sucesso!")
+with tab3:
+    st.header("3. Auditoria")
+    uploaded_audit = st.file_uploader("Envie a planilha para auditoria", type=['xlsx'], key='audit')  # Somente .xlsx agora
+    if uploaded_audit:
+        audit_df = pd.read_excel(uploaded_audit)  # Lê o arquivo .xlsx
+        audit_df.columns = audit_df.columns.str.strip().str.replace('"', '', regex=False).str.replace('\n', '', regex=False).str.replace('\r', '', regex=False)
 
-    output_file = "resultado_auditoria.xlsx"
-    aplicar_destaque_excel(result_df, output_file)
+        result_df = process_planilha(audit_df, configs)
+        st.success("✅ Planilha auditada com sucesso!")
 
-    with open(output_file, 'rb') as f:
-        st.download_button("📥 Baixar resultado auditado", f, file_name=output_file)
+        output_excel_file = "resultado_auditoria.xlsx"
+        aplicar_destaque_excel(result_df, output_excel_file)
+
+        with open(output_excel_file, 'rb') as f:
+            st.download_button("📥 Baixar resultado auditado (Excel)", f, file_name=output_excel_file)
+
+        output_pdf_file = "resultado_auditoria.pdf"
+        export_to_pdf(result_df, output_pdf_file)
+
+        with open(output_pdf_file, 'rb') as f:
+            st.download_button("📥 Baixar resultado auditado (PDF)", f, file_name=output_pdf_file)

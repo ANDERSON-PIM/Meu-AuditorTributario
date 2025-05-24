@@ -30,7 +30,6 @@ def load_configurations():
     # Verificar se existe o arquivo CSV
     if os.path.exists(CONFIG_FILE):
         try:
-            # Primeiro, verificar a estrutura do arquivo CSV
             with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
                 sample = f.read(1024)  # Ler uma amostra para determinar o formato
                 dialect = csv.Sniffer().sniff(sample)
@@ -39,22 +38,23 @@ def load_configurations():
                 reader = csv.reader(f, dialect)
                 for row in reader:
                     if len(row) >= 3:  # Garantir que temos pelo menos descrição, NCM e alíquota
-                        # Verificar se o arquivo tem 4 ou 5 colunas
+                        ncm_val = str(row[1]).strip() # Garantir que NCM seja string
+                        aliq_val = str(row[2]).strip()
                         if len(row) == 4:
                             # Formato: [descrição, NCM, alíquota, tributação]
                             configs[row[0]] = {
-                                'NCM': row[1],
-                                'ALIQ_ICMS': row[2],
-                                'TRIBUTACAO': row[3],
+                                'NCM': ncm_val,
+                                'ALIQ_ICMS': aliq_val,
+                                'TRIBUTACAO': str(row[3]).strip(),
                                 'CEST': '0'  # Valor padrão para CEST
                             }
                         elif len(row) == 5:
                             # Formato: [descrição, NCM, alíquota, tributação, CEST]
                             configs[row[0]] = {
-                                'NCM': row[1],
-                                'ALIQ_ICMS': row[2],
-                                'TRIBUTACAO': row[3],
-                                'CEST': row[4]
+                                'NCM': ncm_val,
+                                'ALIQ_ICMS': aliq_val,
+                                'TRIBUTACAO': str(row[3]).strip(),
+                                'CEST': str(row[4]).strip()
                             }
             
             st.sidebar.success(f"✅ Arquivo CSV carregado com sucesso! {len(configs)} itens encontrados.")
@@ -64,12 +64,14 @@ def load_configurations():
     # Se não existir arquivo CSV ou estiver vazio, tentar carregar do Excel
     if len(configs) == 0 and os.path.exists('configuracoes.xlsx'):
         try:
-            df = pd.read_excel('configuracoes.xlsx')
+            # Ler Excel garantindo que NCM seja string
+            df = pd.read_excel('configuracoes.xlsx', dtype={'NCM': str})
             df.columns = df.columns.str.strip().str.replace('"', '', regex=False).str.replace('\n', '', regex=False).str.replace('\r', '', regex=False)
             
             for _, row in df.iterrows():
                 desc = str(row['Descrição item']).strip()
-                ncm = str(row['NCM']).strip() if 'NCM' in row else ''
+                # NCM já é string devido ao dtype, apenas tratar valores ausentes
+                ncm = str(row['NCM']).strip() if pd.notna(row['NCM']) else '' 
                 aliq = str(row['Aliq. ICMS']).strip()
                 trib = str(row.get('TRIBUTAÇÃO', aliq)).strip()
                 cest = str(row.get('CEST', '0')).strip()  # Atribuindo 0 se não tiver
@@ -87,9 +89,14 @@ def save_all_configurations(configs):
     with open(CONFIG_FILE, 'w', encoding='utf-8', newline='') as f:
         writer = csv.writer(f)
         for desc, values in configs.items():
-            writer.writerow([desc, values['NCM'], values['ALIQ_ICMS'], values['TRIBUTACAO'], values['CEST']])
+            # Garantir que NCM seja salvo como string
+            writer.writerow([desc, str(values['NCM']), str(values['ALIQ_ICMS']), str(values['TRIBUTACAO']), str(values['CEST'])])
 
 def aplicar_destaque_excel(df, output_file):
+    # Garantir que NCM seja string antes de salvar
+    if 'NCM' in df.columns:
+        df['NCM'] = df['NCM'].astype(str)
+        
     df.to_excel(output_file, index=False)
 
     wb = openpyxl.load_workbook(output_file)
@@ -105,7 +112,7 @@ def aplicar_destaque_excel(df, output_file):
             ws.cell(row=i, column=col_map['Aliq. ICMS']).fill = yellow_fill
         if df.at[i - 2, 'TRIBUTAÇÃO Alterado']:
             ws.cell(row=i, column=col_map['TRIBUTAÇÃO']).fill = yellow_fill
-        if df.at[i - 2, 'CEST Alterado']:  # Adicionando CEST
+        if df.at[i - 2, 'CEST Alterado']:
             ws.cell(row=i, column=col_map['CEST']).fill = yellow_fill
 
     wb.save(output_file)
@@ -124,8 +131,9 @@ def export_to_pdf(df, output_file):
 
     y_position = height - 70
     for i, row in df.iterrows():
-        c.drawString(30, y_position, row['Descrição item'])
-        c.drawString(200, y_position, str(row['NCM']))
+        c.drawString(30, y_position, str(row['Descrição item']))
+        # Garantir que NCM seja exibido como string
+        c.drawString(200, y_position, str(row['NCM'])) 
         c.drawString(350, y_position, str(row['Aliq. ICMS']))
         c.drawString(500, y_position, str(row['TRIBUTAÇÃO']))
         c.drawString(650, y_position, str(row['CEST']))  # Exibindo CEST
@@ -140,19 +148,32 @@ def export_to_pdf(df, output_file):
 def process_planilha(df, configs):
     # Se não existe a coluna 'CEST', adicionar com valor '0' por padrão
     if 'CEST' not in df.columns:
-        df['CEST'] = '0'  # Ou 'NaN' caso prefira valores ausentes
+        df['CEST'] = '0'
+
+    # Garantir que NCM seja tratado como string logo após a leitura
+    if 'NCM' in df.columns:
+        df['NCM'] = df['NCM'].astype(str).str.replace('\.0$', '', regex=True).str.strip()
+    else:
+        df['NCM'] = '' # Criar coluna NCM vazia se não existir
+        
+    # Garantir que outras colunas relevantes sejam string
+    if 'Aliq. ICMS' in df.columns: df['Aliq. ICMS'] = df['Aliq. ICMS'].astype(str).str.strip()
+    if 'TRIBUTAÇÃO' in df.columns: df['TRIBUTAÇÃO'] = df['TRIBUTAÇÃO'].astype(str).str.strip()
+    if 'CEST' in df.columns: df['CEST'] = df['CEST'].astype(str).str.strip()
 
     df['NCM Alterado'] = False
     df['Aliq. ICMS Alterado'] = False
     df['TRIBUTAÇÃO Alterado'] = False
-    df['CEST Alterado'] = False  # Coluna CEST
+    df['CEST Alterado'] = False
+    df['ITEM CONSIDERADO'] = ''
 
     for i, row in df.iterrows():
         desc_item = str(row['Descrição item']).strip().lower()
-        ncm_item = str(row['NCM']).strip() if 'NCM' in row else ''
+        # NCM já deve ser string aqui
+        ncm_item = str(row['NCM']).strip() 
         aliq_item = str(row['Aliq. ICMS']).strip()
-        trib_item = str(row['TRIBUTAÇÃO']).strip() if row['TRIBUTAÇÃO'] else ''
-        cest_item = str(row['CEST']).strip() if row['CEST'] else ''
+        trib_item = str(row['TRIBUTAÇÃO']).strip() if pd.notna(row['TRIBUTAÇÃO']) else ''
+        cest_item = str(row['CEST']).strip() if pd.notna(row['CEST']) else ''
 
         palavras_item = get_keywords(desc_item)
         encontrado = False
@@ -160,19 +181,26 @@ def process_planilha(df, configs):
         # 1) Correspondência exata da descrição
         for desc_base, values in configs.items():
             desc_base_clean = desc_base.strip().lower()
+            # Garantir que NCM da base também seja string para comparação
+            ncm_base = str(values['NCM']).strip()
+            aliq_base = str(values['ALIQ_ICMS']).strip()
+            trib_base = str(values['TRIBUTACAO']).strip()
+            cest_base = str(values['CEST']).strip()
+            
             if desc_item == desc_base_clean:
-                if ncm_item != values['NCM']:
-                    df.at[i, 'NCM'] = values['NCM']
+                if ncm_item != ncm_base:
+                    df.at[i, 'NCM'] = ncm_base
                     df.at[i, 'NCM Alterado'] = True
-                if aliq_item != values['ALIQ_ICMS']:
-                    df.at[i, 'Aliq. ICMS'] = values['ALIQ_ICMS']
+                if aliq_item != aliq_base:
+                    df.at[i, 'Aliq. ICMS'] = aliq_base
                     df.at[i, 'Aliq. ICMS Alterado'] = True
-                if trib_item != values['TRIBUTACAO']:
-                    df.at[i, 'TRIBUTAÇÃO'] = values['TRIBUTACAO']
+                if trib_item != trib_base:
+                    df.at[i, 'TRIBUTAÇÃO'] = trib_base
                     df.at[i, 'TRIBUTAÇÃO Alterado'] = True
-                if cest_item != values['CEST']:
-                    df.at[i, 'CEST'] = values['CEST']
-                    df.at[i, 'CEST Alterado'] = True  # Atualizando CEST
+                if cest_item != cest_base:
+                    df.at[i, 'CEST'] = cest_base
+                    df.at[i, 'CEST Alterado'] = True
+                df.at[i, 'ITEM CONSIDERADO'] = f'Código: {desc_base}'
                 encontrado = True
                 break
         if encontrado:
@@ -182,20 +210,25 @@ def process_planilha(df, configs):
         for desc_base, values in configs.items():
             palavras_base = get_keywords(desc_base)
             palavras_iguais = palavras_item & palavras_base
+            ncm_base = str(values['NCM']).strip()
+            aliq_base = str(values['ALIQ_ICMS']).strip()
+            trib_base = str(values['TRIBUTACAO']).strip()
+            cest_base = str(values['CEST']).strip()
 
-            if len(palavras_iguais) >= 2 or values['NCM'] == ncm_item:
-                if ncm_item != values['NCM']:
-                    df.at[i, 'NCM'] = values['NCM']
+            if len(palavras_iguais) >= 2 or ncm_base == ncm_item:
+                if ncm_item != ncm_base:
+                    df.at[i, 'NCM'] = ncm_base
                     df.at[i, 'NCM Alterado'] = True
-                if aliq_item != values['ALIQ_ICMS']:
-                    df.at[i, 'Aliq. ICMS'] = values['ALIQ_ICMS']
+                if aliq_item != aliq_base:
+                    df.at[i, 'Aliq. ICMS'] = aliq_base
                     df.at[i, 'Aliq. ICMS Alterado'] = True
-                if trib_item != values['TRIBUTACAO']:
-                    df.at[i, 'TRIBUTAÇÃO'] = values['TRIBUTACAO']
+                if trib_item != trib_base:
+                    df.at[i, 'TRIBUTAÇÃO'] = trib_base
                     df.at[i, 'TRIBUTAÇÃO Alterado'] = True
-                if cest_item != values['CEST']:
-                    df.at[i, 'CEST'] = values['CEST']
-                    df.at[i, 'CEST Alterado'] = True  # Atualizando CEST
+                if cest_item != cest_base:
+                    df.at[i, 'CEST'] = cest_base
+                    df.at[i, 'CEST Alterado'] = True
+                df.at[i, 'ITEM CONSIDERADO'] = f'Código: {desc_base}'
                 encontrado = True
                 break
         if encontrado:
@@ -204,19 +237,25 @@ def process_planilha(df, configs):
         # 3) Fuzzy matching (limite 70%)
         for desc_base, values in configs.items():
             score = fuzz.ratio(desc_item, desc_base.strip().lower())
+            ncm_base = str(values['NCM']).strip()
+            aliq_base = str(values['ALIQ_ICMS']).strip()
+            trib_base = str(values['TRIBUTACAO']).strip()
+            cest_base = str(values['CEST']).strip()
+            
             if score >= 70:
-                if ncm_item != values['NCM']:
-                    df.at[i, 'NCM'] = values['NCM']
+                if ncm_item != ncm_base:
+                    df.at[i, 'NCM'] = ncm_base
                     df.at[i, 'NCM Alterado'] = True
-                if aliq_item != values['ALIQ_ICMS']:
-                    df.at[i, 'Aliq. ICMS'] = values['ALIQ_ICMS']
+                if aliq_item != aliq_base:
+                    df.at[i, 'Aliq. ICMS'] = aliq_base
                     df.at[i, 'Aliq. ICMS Alterado'] = True
-                if trib_item != values['TRIBUTACAO']:
-                    df.at[i, 'TRIBUTAÇÃO'] = values['TRIBUTACAO']
+                if trib_item != trib_base:
+                    df.at[i, 'TRIBUTAÇÃO'] = trib_base
                     df.at[i, 'TRIBUTAÇÃO Alterado'] = True
-                if cest_item != values['CEST']:
-                    df.at[i, 'CEST'] = values['CEST']
-                    df.at[i, 'CEST Alterado'] = True  # Atualizando CEST
+                if cest_item != cest_base:
+                    df.at[i, 'CEST'] = cest_base
+                    df.at[i, 'CEST Alterado'] = True
+                df.at[i, 'ITEM CONSIDERADO'] = f'Código: {desc_base}'
                 encontrado = True
                 break
 
@@ -229,13 +268,16 @@ configs = load_configurations()
 st.sidebar.write("### Status do Sistema")
 st.sidebar.write(f"Itens na base de configurações: {len(configs)}")
 if len(configs) == 0:
-    st.sidebar.warning("⚠️ Base de configurações vazia. Por favor, adicione uma base auditada ou verifique se o arquivo 'configuracoes.csv' está na mesma pasta do app.")
+    st.sidebar.warning("⚠️ Base de configurações vazia. Por favor, adicione uma base auditada ou verifique se o arquivo 'configuracoes.csv' ou 'configuracoes.xlsx' está na mesma pasta do app.")
 else:
     st.sidebar.success("✅ Base de configurações carregada com sucesso!")
     # Mostrar exemplo de item para debug
-    exemplo_key = list(configs.keys())[0]
-    st.sidebar.write(f"Exemplo de item: {exemplo_key}")
-    st.sidebar.write(f"Valores: {configs[exemplo_key]}")
+    try:
+        exemplo_key = list(configs.keys())[0]
+        st.sidebar.write(f"Exemplo de item: {exemplo_key}")
+        st.sidebar.write(f"Valores: {configs[exemplo_key]}")
+    except IndexError:
+        st.sidebar.write("Não foi possível mostrar exemplo (base vazia).")
 
 tab1, tab2, tab3 = st.tabs(["🟩 1. Adicionar Base Auditada", "📋 2. Ver Base de Configurações", "🔍 3. Auditoria"])
 
@@ -243,35 +285,44 @@ with tab1:
     st.header("1. Adicionar base auditada")
     uploaded_base = st.file_uploader("Envie a planilha auditada", type=['xlsx'], key='base')
     if uploaded_base:
-        base_df = pd.read_excel(uploaded_base)
+        # Ler Excel garantindo que NCM seja string
+        base_df = pd.read_excel(uploaded_base, dtype={'NCM': str})
         base_df.columns = base_df.columns.str.strip().str.replace('"', '', regex=False).str.replace('\n', '', regex=False).str.replace('\r', '', regex=False)
 
         # Garantir que 'CEST' esteja presente na planilha auditada
         if 'CEST' not in base_df.columns:
-            base_df['CEST'] = '0'  # Definindo como 0 se não existir
+            base_df['CEST'] = '0'
 
         for _, row in base_df.iterrows():
             desc = str(row['Descrição item']).strip()
-            ncm = str(row['NCM']).strip() if 'NCM' in row else ''
+            # NCM já é string devido ao dtype, apenas tratar valores ausentes
+            ncm = str(row['NCM']).strip() if pd.notna(row['NCM']) else ''
             aliq = str(row['Aliq. ICMS']).strip()
             trib = str(row.get('TRIBUTAÇÃO', aliq)).strip()
-            cest = str(row.get('CEST', '0')).strip()  # Atribuindo 0 se não tiver
+            cest = str(row.get('CEST', '0')).strip()
             configs[desc] = {'NCM': ncm, 'ALIQ_ICMS': aliq, 'TRIBUTACAO': trib, 'CEST': cest}
 
         save_all_configurations(configs)
         st.success(f"✅ Base auditada adicionada com sucesso! {len(configs)} itens na base.")
+        # Atualizar status na sidebar
+        st.sidebar.success("✅ Base de configurações atualizada!")
+        st.sidebar.write(f"Itens na base de configurações: {len(configs)}")
 
 with tab2:
     st.header("2. Ver base de configurações salva (com filtro)")
     
     if len(configs) == 0:
-        st.warning("⚠️ A base de configurações está vazia. Por favor, adicione uma base auditada primeiro ou verifique se o arquivo 'configuracoes.csv' está na mesma pasta do app.")
+        st.warning("⚠️ A base de configurações está vazia. Por favor, adicione uma base auditada primeiro ou verifique se o arquivo 'configuracoes.csv' ou 'configuracoes.xlsx' está na mesma pasta do app.")
     else:
         search_term = st.text_input("🔎 Pesquise por NCM ou parte da descrição")
         
         if search_term or st.checkbox("👁️ Mostrar toda a base auditada"):
             # Criar DataFrame a partir do dicionário configs
             df_base = pd.DataFrame.from_dict(configs, orient='index')
+            
+            # Garantir que NCM seja string no DataFrame ANTES de exibir
+            if 'NCM' in df_base.columns:
+                df_base['NCM'] = df_base['NCM'].astype(str)
             
             # Verificar e mostrar as colunas disponíveis
             st.write(f"Colunas disponíveis: {df_base.columns.tolist()}")
@@ -280,35 +331,45 @@ with tab2:
             df_base = df_base.reset_index().rename(columns={'index': 'Descrição'})
             df_base['Descrição'] = df_base['Descrição'].astype(str)
             
+            # Garantir que NCM seja string após renomear (redundante, mas seguro)
+            if 'NCM' in df_base.columns:
+                df_base['NCM'] = df_base['NCM'].astype(str)
+                
+            df_display = df_base.copy() # Criar cópia para exibição
+            
             if search_term:
                 search_term = search_term.lower().strip()
                 # Filtrar por descrição
-                filtro_descricao = df_base['Descrição'].str.lower().str.contains(search_term)
+                filtro_descricao = df_display['Descrição'].str.lower().str.contains(search_term)
                 
                 # Filtrar por NCM se a coluna existir
-                if 'NCM' in df_base.columns:
-                    filtro_ncm = df_base['NCM'].astype(str).str.lower().str.contains(search_term)
-                    df_filtrada = df_base[filtro_descricao | filtro_ncm]
+                if 'NCM' in df_display.columns:
+                    # NCM já é string, apenas comparar
+                    filtro_ncm = df_display['NCM'].str.lower().str.contains(search_term)
+                    df_filtrada = df_display[filtro_descricao | filtro_ncm]
                 else:
                     st.warning("Coluna NCM não encontrada. Filtrando apenas por descrição.")
-                    df_filtrada = df_base[filtro_descricao]
+                    df_filtrada = df_display[filtro_descricao]
                 
+                # Exibir o DataFrame filtrado
                 st.dataframe(df_filtrada)
             else:
-                st.dataframe(df_base)
+                # Exibir o DataFrame completo
+                st.dataframe(df_display)
 
 with tab3:
     st.header("3. Auditoria")
     
     if len(configs) == 0:
-        st.warning("⚠️ A base de configurações está vazia. Por favor, adicione uma base auditada primeiro ou verifique se o arquivo 'configuracoes.csv' está na mesma pasta do app.")
+        st.warning("⚠️ A base de configurações está vazia. Por favor, adicione uma base auditada primeiro ou verifique se o arquivo 'configuracoes.csv' ou 'configuracoes.xlsx' está na mesma pasta do app.")
     else:
         uploaded_audit = st.file_uploader("Envie a planilha para auditoria", type=['xlsx'], key='audit')
         if uploaded_audit:
-            audit_df = pd.read_excel(uploaded_audit)
+            # Ler Excel garantindo que NCM seja string
+            audit_df = pd.read_excel(uploaded_audit, dtype={'NCM': str})
             audit_df.columns = audit_df.columns.str.strip().str.replace('"', '', regex=False).str.replace('\n', '', regex=False).str.replace('\r', '', regex=False)
 
-            result_df = process_planilha(audit_df, configs)
+            result_df = process_planilha(audit_df.copy(), configs) # Usar cópia para evitar modificar original
             st.success("✅ Planilha auditada com sucesso!")
 
             output_excel_file = "resultado_auditoria.xlsx"
